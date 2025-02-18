@@ -45,8 +45,8 @@ pub struct ErrResult {
 pub enum AudioError {
     #[error("unknown error")]
     Unknown,
-    #[error("error happened during decoding; check your input file")]
-    SymphoniaError,
+    #[error("error happened during decoding; check your input file: {0}")]
+    SymphoniaError(String),
 }
 
 fn use_display<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
@@ -70,7 +70,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
             &format_opts,
             &metadata_opts,
         )
-        .or_else(|_error| Err(AudioError::SymphoniaError))?;
+        .or_else(|error| Err(AudioError::SymphoniaError(error.to_string())))?;
 
     // yield occasionally to not starve other tasks
     tokio::task::yield_now().await;
@@ -82,7 +82,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &decode_opts)
-        .or_else(|_error| Err(AudioError::SymphoniaError))?;
+        .or_else(|error| Err(AudioError::SymphoniaError(error.to_string())))?;
 
     loop {
         // yield occasionally to not starve other tasks
@@ -90,7 +90,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
 
         let packet = match reader.next_packet() {
             Ok(packet) => packet,
-            Err(_err) => break Err(AudioError::SymphoniaError),
+            Err(error) => break Err(AudioError::SymphoniaError(error.to_string())),
         };
 
         if packet.track_id() != track_id {
@@ -108,7 +108,9 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
                 }
             }
             Err(symphonia::core::errors::Error::DecodeError(err)) => warn!("decode error: {}", err),
-            Err(_err) => break Err(AudioError::SymphoniaError),
+            Err(error) => {
+                break Err(AudioError::SymphoniaError(error.to_string()));
+            }
         }
     }?; // return if encountered any error
 
