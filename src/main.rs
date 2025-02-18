@@ -47,6 +47,8 @@ pub enum AudioError {
     Unknown,
     #[error("error happened during decoding; check your input file: {0}")]
     SymphoniaError(String),
+    #[error("file doesn't contain any track")]
+    NoTrack,
 }
 
 fn use_display<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
@@ -61,7 +63,10 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
     let source = Box::new(Cursor::new(data));
     let mut decoded = vec![];
     let mss = MediaSourceStream::new(source, Default::default());
-    let format_opts = FormatOptions::default();
+    let format_opts = FormatOptions {
+        enable_gapless: true,
+        ..FormatOptions::default()
+    };
     let metadata_opts = MetadataOptions::default();
     let probed = get_probe()
         .format(
@@ -77,7 +82,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
 
     let decode_opts = DecoderOptions::default();
     let mut reader = probed.format;
-    let track = reader.default_track().unwrap();
+    let track = reader.default_track().ok_or(AudioError::NoTrack)?;
     let track_id = track.id;
 
     let mut decoder = symphonia::default::get_codecs()
