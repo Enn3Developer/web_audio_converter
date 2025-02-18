@@ -1,0 +1,6 @@
+[global.limits]
+json = 5242880
+
+[release]
+address = "0.0.0.0"
+port = 4455
