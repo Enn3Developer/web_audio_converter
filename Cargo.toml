@@ -7,4 +7,4 @@ edition = "2021"
 rocket = { version = "0.5.1", features = ["serde_json", "json"] }
 thiserror = "2.0.11"
 serde = "1.0.217"
-symphonia = { version = "0.5.4", features = ["all-codecs", "opt-simd", "all-formats", "mp3"] }
+symphonia = { version = "0.5.4", features = ["symphonia-bundle-mp3", "opt-simd"] }
