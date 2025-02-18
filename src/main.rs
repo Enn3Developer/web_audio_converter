@@ -4,6 +4,7 @@ extern crate rocket;
 use base64::alphabet::Alphabet;
 use base64::engine::general_purpose::PAD;
 use base64::engine::GeneralPurpose;
+use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use once_cell::sync::Lazy;
 use rocket::serde::json::Json;
@@ -190,7 +191,7 @@ pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResul
 
 #[post("/convert", data = "<data>")]
 async fn convert(data: Json<Data>) -> Json<ConversionResult<OkResult, ErrResult>> {
-    match decode(BASE64_DECODER.decode(&data.audio).unwrap())
+    match decode(BASE64_STANDARD.decode(&data.audio).unwrap())
         .await
         .or_else(|error| Err(ErrResult { error }))
     {
