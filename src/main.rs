@@ -1,6 +1,12 @@
 #[macro_use]
 extern crate rocket;
 
+use base64::alphabet::Alphabet;
+use base64::engine::general_purpose::PAD;
+use base64::engine::{GeneralPurpose, GeneralPurposeConfig};
+use base64::prelude::{BASE64_STANDARD, BASE64_URL_SAFE};
+use base64::Engine;
+use log::error;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio;
@@ -20,7 +26,7 @@ const PREC: u8 = 3;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Data {
-    audio: Vec<u8>,
+    audio: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -49,6 +55,8 @@ pub enum AudioError {
     SymphoniaError(String),
     #[error("file doesn't contain any track")]
     NoTrack,
+    #[error("error happened during decoding of base64: {0}")]
+    Base64(String),
 }
 
 fn use_display<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
@@ -176,9 +184,17 @@ pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResul
 
 #[post("/convert", data = "<data>")]
 async fn convert(data: Json<Data>) -> Json<ConversionResult<OkResult, ErrResult>> {
-    match decode(data.audio.clone())
-        .await
-        .or_else(|error| Err(ErrResult { error }))
+    match decode(
+        GeneralPurpose::new(
+            &Alphabet::new("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./")
+                .unwrap(),
+            PAD,
+        )
+        .decode(&data.audio)
+        .unwrap(),
+    )
+    .await
+    .or_else(|error| Err(ErrResult { error }))
     {
         Ok(data) => convert_audio(data).await,
         Err(res) => ConversionResult::Err(res),

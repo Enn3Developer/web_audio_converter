@@ -8,3 +8,5 @@ rocket = { version = "0.5.1", features = ["serde_json", "json"] }
 thiserror = "2.0.11"
 serde = "1.0.217"
 symphonia = { version = "0.5.4", features = ["symphonia-bundle-mp3"] }
+base64 = "0.22.1"
+log = "0.4.25"
