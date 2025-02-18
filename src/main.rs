@@ -171,9 +171,7 @@ pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResul
         out.push(byte);
     }
 
-    ConversionResult::Err(ErrResult {
-        error: AudioError::Unknown,
-    })
+    ConversionResult::Ok(OkResult { audio: out })
 }
 
 #[post("/convert", data = "<data>")]
