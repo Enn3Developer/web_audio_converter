@@ -64,7 +64,12 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
     let format_opts = FormatOptions::default();
     let metadata_opts = MetadataOptions::default();
     let probed = get_probe()
-        .format(&Hint::default(), mss, &format_opts, &metadata_opts)
+        .format(
+            &Hint::default().with_extension("mp3"),
+            mss,
+            &format_opts,
+            &metadata_opts,
+        )
         .or_else(|_error| Err(AudioError::SymphoniaError))?;
 
     // yield occasionally to not starve other tasks
