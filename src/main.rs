@@ -3,10 +3,9 @@ extern crate rocket;
 
 use base64::alphabet::Alphabet;
 use base64::engine::general_purpose::PAD;
-use base64::engine::{GeneralPurpose, GeneralPurposeConfig};
-use base64::prelude::{BASE64_STANDARD, BASE64_URL_SAFE};
+use base64::engine::GeneralPurpose;
 use base64::Engine;
-use log::error;
+use once_cell::sync::Lazy;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio;
@@ -23,6 +22,13 @@ use symphonia::default::get_probe;
 use thiserror::Error;
 
 const PREC: u8 = 3;
+
+const BASE64_DECODER: Lazy<GeneralPurpose> = Lazy::new(|| {
+    GeneralPurpose::new(
+        &Alphabet::new("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./").unwrap(),
+        PAD,
+    )
+});
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Data {
@@ -184,17 +190,9 @@ pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResul
 
 #[post("/convert", data = "<data>")]
 async fn convert(data: Json<Data>) -> Json<ConversionResult<OkResult, ErrResult>> {
-    match decode(
-        GeneralPurpose::new(
-            &Alphabet::new("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./")
-                .unwrap(),
-            PAD,
-        )
-        .decode(&data.audio)
-        .unwrap(),
-    )
-    .await
-    .or_else(|error| Err(ErrResult { error }))
+    match decode(BASE64_DECODER.decode(&data.audio).unwrap())
+        .await
+        .or_else(|error| Err(ErrResult { error }))
     {
         Ok(data) => convert_audio(data).await,
         Err(res) => ConversionResult::Err(res),

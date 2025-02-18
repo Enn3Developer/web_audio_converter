@@ -1598,7 +1598,7 @@ name = "web_audio_converter"
 version = "0.1.0"
 dependencies = [
  "base64",
- "log",
+ "once_cell",
  "rocket",
  "serde",
  "symphonia",
