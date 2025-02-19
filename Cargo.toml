@@ -9,3 +9,4 @@ thiserror = "2.0.11"
 serde = "1.0.217"
 symphonia = { version = "0.5.4", features = ["all", "opt-simd"] }
 base64 = "0.22.1"
+ascii = "1.1.0"

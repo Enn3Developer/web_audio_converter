@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate rocket;
 
+use ascii::{AsciiChar, AsciiString, ToAsciiChar};
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use rocket::http::ContentType;
@@ -12,6 +13,7 @@ use serde::Serializer;
 use std::fmt::Display;
 use std::io;
 use std::io::Cursor;
+use std::ops::{Deref, DerefMut};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::FormatOptions;
@@ -42,9 +44,41 @@ impl<T, E> From<Result<T, E>> for ConversionResult<T, E> {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct OkResult {
-    audio: String,
+    audio: AsciiString,
+}
+
+#[derive(Debug, Clone)]
+pub struct NAsciiString(AsciiString);
+
+impl NAsciiString {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(AsciiString::with_capacity(capacity))
+    }
+}
+
+impl Deref for NAsciiString {
+    type Target = AsciiString;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for NAsciiString {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<'r, 'o: 'r> Responder<'r, 'o> for NAsciiString {
+    fn respond_to(self, request: &'r Request<'_>) -> rocket::response::Result<'o> {
+        let mut response = Response::new();
+        response.set_header(ContentType::new("text", "plain"));
+        response.set_sized_body(self.0.len(), Cursor::new(self.0));
+        Ok(response)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Responder)]
@@ -159,14 +193,14 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
     Ok(decoded)
 }
 
-pub async fn convert_audio(data: Vec<i8>) -> String {
+pub async fn convert_audio(data: Vec<i8>) -> NAsciiString {
     let mut charge: i32 = 0;
     let mut strength: i32 = 1;
     let mut previous_bit = false;
     let strength_increase = 7;
     let strength_decrease = 20;
     let len = data.len() / 8;
-    let mut out = Vec::with_capacity(len);
+    let mut out = NAsciiString::with_capacity(data.len() / 8);
 
     for i in 0..len {
         // yield occasionally to not starve other tasks
@@ -213,14 +247,14 @@ pub async fn convert_audio(data: Vec<i8>) -> String {
             byte = if bit { -(byte >> 1) } else { byte >> 1 };
             previous_bit = bit;
         }
-        out.push(((byte as i16 + 128) as u8) as char);
+        out.push(((byte as i16 + 128) as u8).to_ascii_char().unwrap());
     }
 
-    out.iter().collect()
+    out
 }
 
 #[get("/convert/<name>")]
-async fn convert_file(name: &str) -> Result<String, ErrResult> {
+async fn convert_file(name: &str) -> Result<NAsciiString, ErrResult> {
     let file = tokio::fs::read(name).await.unwrap();
     match decode(file).await.or_else(|error| Err(ErrResult { error })) {
         Ok(audio) => Ok(convert_audio(audio).await),
@@ -229,7 +263,7 @@ async fn convert_file(name: &str) -> Result<String, ErrResult> {
 }
 
 #[post("/convert", data = "<data>")]
-async fn convert(data: Json<Data>) -> Result<String, ErrResult> {
+async fn convert(data: Json<Data>) -> Result<NAsciiString, ErrResult> {
     match decode(BASE64_STANDARD.decode(&data.audio).unwrap())
         .await
         .or_else(|error| Err(ErrResult { error }))
