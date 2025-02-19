@@ -44,7 +44,7 @@ impl<T, E> From<Result<T, E>> for ConversionResult<T, E> {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OkResult {
-    audio: Vec<u8>,
+    audio: Vec<i8>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -147,20 +147,20 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
 }
 
 pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResult> {
-    let mut charge: u8 = 0;
-    let mut strength: u8 = 0;
+    let mut charge: i8 = 0;
+    let mut strength: i8 = 0;
     let mut previous_bit = false;
-    let mut out: Vec<u8> = Vec::with_capacity(data.len() / 8);
+    let mut out: Vec<i8> = Vec::with_capacity(data.len() / 8);
 
     for i in 0..data.len() {
         // yield occasionally to not starve other tasks
         tokio::task::yield_now().await;
 
-        let mut byte = 0u8;
+        let mut byte = 0i8;
         for j in 0..8 {
-            let level = data.get(i * 8 + j).unwrap_or(&0).wrapping_mul(127);
+            let level = data.get(i * 8 + j).unwrap_or(&0).wrapping_mul(127) as i8;
             let bit = level > charge || (level == charge && charge == 127);
-            let target: u8 = if bit { 127 } else { 255 };
+            let target: i8 = if bit { 127 } else { -128 };
             let mut next_charge = charge
                 + ((strength.wrapping_mul(target.wrapping_sub(charge)) + (1 << (PREC - 1)))
                     >> PREC);
@@ -190,7 +190,11 @@ pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResul
             charge = next_charge;
             strength = next_strength;
             previous_bit = bit;
-            byte = if bit { (byte >> 1) + 128 } else { byte >> 1 };
+            byte = if bit {
+                ((byte as i16 >> 1) + 128) as i8
+            } else {
+                byte >> 1
+            };
         }
         out.push(byte);
     }
