@@ -142,7 +142,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
     Ok(decoded)
 }
 
-pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<OkResult, ErrResult> {
+pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<String, ErrResult> {
     let mut charge: i32 = 0;
     let mut strength: i32 = 1;
     let mut previous_bit = false;
@@ -199,13 +199,11 @@ pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<OkResult, ErrResul
         out.push(((byte as i16 + 128) as u8) as char);
     }
 
-    ConversionResult::Ok(OkResult {
-        audio: out.iter().collect(),
-    })
+    ConversionResult::Ok(out.iter().collect())
 }
 
 #[get("/convert/<name>")]
-async fn convert_file(name: &str) -> Json<ConversionResult<OkResult, ErrResult>> {
+async fn convert_file(name: &str) -> Json<ConversionResult<String, ErrResult>> {
     let file = tokio::fs::read(name).await.unwrap();
     match decode(file).await.or_else(|error| Err(ErrResult { error })) {
         Ok(audio) => convert_audio(audio).await,
@@ -215,7 +213,7 @@ async fn convert_file(name: &str) -> Json<ConversionResult<OkResult, ErrResult>>
 }
 
 #[post("/convert", data = "<data>")]
-async fn convert(data: Json<Data>) -> Json<ConversionResult<OkResult, ErrResult>> {
+async fn convert(data: Json<Data>) -> Json<ConversionResult<String, ErrResult>> {
     match decode(BASE64_STANDARD.decode(&data.audio).unwrap())
         .await
         .or_else(|error| Err(ErrResult { error }))
