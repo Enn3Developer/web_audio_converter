@@ -1,17 +1,14 @@
 #[macro_use]
 extern crate rocket;
 
-use base64::alphabet::Alphabet;
-use base64::engine::general_purpose::PAD;
-use base64::engine::GeneralPurpose;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
-use once_cell::sync::Lazy;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio;
 use serde::Serializer;
 use std::fmt::Display;
+use std::io;
 use std::io::Cursor;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
@@ -24,13 +21,6 @@ use thiserror::Error;
 
 const PREC: u8 = 3;
 
-const BASE64_DECODER: Lazy<GeneralPurpose> = Lazy::new(|| {
-    GeneralPurpose::new(
-        &Alphabet::new("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789./").unwrap(),
-        PAD,
-    )
-});
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Data {
     audio: String,
@@ -41,6 +31,15 @@ pub struct Data {
 pub enum ConversionResult<T, E> {
     Ok(T),
     Err(E),
+}
+
+impl<T, E> From<Result<T, E>> for ConversionResult<T, E> {
+    fn from(value: Result<T, E>) -> Self {
+        match value {
+            Ok(t) => ConversionResult::Ok(t),
+            Err(e) => ConversionResult::Err(e),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -84,12 +83,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
     };
     let metadata_opts = MetadataOptions::default();
     let probed = get_probe()
-        .format(
-            &Hint::default().with_extension("mp3"),
-            mss,
-            &format_opts,
-            &metadata_opts,
-        )
+        .format(&Hint::default(), mss, &format_opts, &metadata_opts)
         .or_else(|error| Err(AudioError::SymphoniaError(error.to_string())))?;
 
     // yield occasionally to not starve other tasks
@@ -110,7 +104,15 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
 
         let packet = match reader.next_packet() {
             Ok(packet) => packet,
-            Err(error) => break Err(AudioError::SymphoniaError(error.to_string())),
+            Err(error) => {
+                if let symphonia::core::errors::Error::IoError(io_error) = &error {
+                    if io_error.kind() == io::ErrorKind::UnexpectedEof {
+                        warn!("decode error: {}", io_error);
+                        break;
+                    }
+                }
+                return Err(AudioError::SymphoniaError(error.to_string()));
+            }
         };
 
         if packet.track_id() != track_id {
@@ -129,18 +131,24 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
             }
             Err(symphonia::core::errors::Error::DecodeError(err)) => warn!("decode error: {}", err),
             Err(error) => {
-                break Err(AudioError::SymphoniaError(error.to_string()));
+                if let symphonia::core::errors::Error::IoError(io_error) = &error {
+                    if io_error.kind() == io::ErrorKind::UnexpectedEof {
+                        warn!("decode error: {}", io_error);
+                        break;
+                    }
+                }
+                return Err(AudioError::SymphoniaError(error.to_string()));
             }
         }
-    }?; // return if encountered any error
+    }
 
     decoder.finalize();
     Ok(decoded)
 }
 
 pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResult> {
-    let mut charge = 0;
-    let mut strength = 0;
+    let mut charge: u8 = 0;
+    let mut strength: u8 = 0;
     let mut previous_bit = false;
     let mut out: Vec<u8> = Vec::with_capacity(data.len() / 8);
 
@@ -150,11 +158,12 @@ pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResul
 
         let mut byte = 0u8;
         for j in 0..8 {
-            let level = data[i * 8 + j] * 127;
+            let level = data.get(i * 8 + j).unwrap_or(&0).wrapping_mul(127);
             let bit = level > charge || (level == charge && charge == 127);
-            let target = if bit { 127 } else { 255 };
-            let mut next_charge =
-                charge + ((strength * (target - charge) + (1 << (PREC - 1))) >> PREC);
+            let target: u8 = if bit { 127 } else { 255 };
+            let mut next_charge = charge
+                + ((strength.wrapping_mul(target.wrapping_sub(charge)) + (1 << (PREC - 1)))
+                    >> PREC);
             if next_charge == charge && next_charge != target {
                 if bit {
                     next_charge += 1;
@@ -189,6 +198,16 @@ pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResul
     ConversionResult::Ok(OkResult { audio: out })
 }
 
+#[get("/convert/<name>")]
+async fn convert_file(name: &str) -> Json<ConversionResult<OkResult, ErrResult>> {
+    let file = tokio::fs::read(name).await.unwrap();
+    match decode(file).await.or_else(|error| Err(ErrResult { error })) {
+        Ok(data) => convert_audio(data).await,
+        Err(res) => ConversionResult::Err(res),
+    }
+    .into()
+}
+
 #[post("/convert", data = "<data>")]
 async fn convert(data: Json<Data>) -> Json<ConversionResult<OkResult, ErrResult>> {
     match decode(BASE64_STANDARD.decode(&data.audio).unwrap())
@@ -208,5 +227,5 @@ async fn index() -> String {
 
 #[launch]
 fn rocket() -> _ {
-    rocket::build().mount("/", routes![index, convert])
+    rocket::build().mount("/", routes![index, convert, convert_file])
 }
