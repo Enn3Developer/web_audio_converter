@@ -19,8 +19,6 @@ use symphonia::core::probe::Hint;
 use symphonia::default::get_probe;
 use thiserror::Error;
 
-const PREC: u8 = 10;
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Data {
     audio: String,
@@ -107,7 +105,6 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
             Err(error) => {
                 if let symphonia::core::errors::Error::IoError(io_error) = &error {
                     if io_error.kind() == io::ErrorKind::UnexpectedEof {
-                        warn!("decode error: {}", io_error);
                         break;
                     }
                 }
@@ -133,7 +130,6 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
             Err(error) => {
                 if let symphonia::core::errors::Error::IoError(io_error) = &error {
                     if io_error.kind() == io::ErrorKind::UnexpectedEof {
-                        warn!("decode error: {}", io_error);
                         break;
                     }
                 }
@@ -156,6 +152,9 @@ pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<OkResult, ErrResul
     let mut out: Vec<i8> = Vec::with_capacity(len);
 
     for i in 0..len {
+        // yield occasionally to not starve other tasks
+        tokio::task::yield_now().await;
+
         let mut byte = 0i8;
         for j in 0..8 {
             let level = data[i * 8 + j] as i32;
@@ -193,8 +192,8 @@ pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<OkResult, ErrResul
                 strength = next_strength;
             }
             // strength adjustment - end
-            let bit_value = if bit { 1 } else { 0 };
-            byte = byte | (bit_value << (7 - j));
+
+            byte = if bit { -(byte >> 1) } else { byte >> 1 };
             previous_bit = bit;
         }
         out.push(byte);
