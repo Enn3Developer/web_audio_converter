@@ -1,11 +1,10 @@
 #[macro_use]
 extern crate rocket;
 
-use ascii::{AsciiChar, AsciiString, ToAsciiChar};
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use rocket::http::ContentType;
-use rocket::response::{Builder, Responder};
+use rocket::response::Responder;
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::{tokio, Request, Response};
@@ -13,7 +12,6 @@ use serde::Serializer;
 use std::fmt::Display;
 use std::io;
 use std::io::Cursor;
-use std::ops::{Deref, DerefMut};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::FormatOptions;
@@ -26,59 +24,6 @@ use thiserror::Error;
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Data {
     audio: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum ConversionResult<T, E> {
-    Ok(T),
-    Err(E),
-}
-
-impl<T, E> From<Result<T, E>> for ConversionResult<T, E> {
-    fn from(value: Result<T, E>) -> Self {
-        match value {
-            Ok(t) => ConversionResult::Ok(t),
-            Err(e) => ConversionResult::Err(e),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct OkResult {
-    audio: AsciiString,
-}
-
-#[derive(Debug, Clone)]
-pub struct NAsciiString(AsciiString);
-
-impl NAsciiString {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self(AsciiString::with_capacity(capacity))
-    }
-}
-
-impl Deref for NAsciiString {
-    type Target = AsciiString;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for NAsciiString {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<'r, 'o: 'r> Responder<'r, 'o> for NAsciiString {
-    fn respond_to(self, request: &'r Request<'_>) -> rocket::response::Result<'o> {
-        let mut response = Response::new();
-        response.set_header(ContentType::new("text", "plain"));
-        response.set_sized_body(self.0.len(), Cursor::new(self.0));
-        Ok(response)
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Responder)]
@@ -193,14 +138,14 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
     Ok(decoded)
 }
 
-pub async fn convert_audio(data: Vec<i8>) -> NAsciiString {
+pub async fn convert_audio(data: Vec<i8>) -> Vec<u8> {
     let mut charge: i32 = 0;
     let mut strength: i32 = 1;
     let mut previous_bit = false;
     let strength_increase = 7;
     let strength_decrease = 20;
     let len = data.len() / 8;
-    let mut out = NAsciiString::with_capacity(data.len() / 8);
+    let mut out = Vec::with_capacity(data.len() / 8);
 
     for i in 0..len {
         // yield occasionally to not starve other tasks
@@ -247,14 +192,14 @@ pub async fn convert_audio(data: Vec<i8>) -> NAsciiString {
             byte = if bit { -(byte >> 1) } else { byte >> 1 };
             previous_bit = bit;
         }
-        out.push(((byte as i16 + 128) as u8).to_ascii_char().unwrap());
+        out.push((byte as i16 + 128) as u8);
     }
 
     out
 }
 
 #[get("/convert/<name>")]
-async fn convert_file(name: &str) -> Result<NAsciiString, ErrResult> {
+async fn convert_file(name: &str) -> Result<Vec<u8>, ErrResult> {
     let file = tokio::fs::read(name).await.unwrap();
     match decode(file).await.or_else(|error| Err(ErrResult { error })) {
         Ok(audio) => Ok(convert_audio(audio).await),
@@ -263,7 +208,7 @@ async fn convert_file(name: &str) -> Result<NAsciiString, ErrResult> {
 }
 
 #[post("/convert", data = "<data>")]
-async fn convert(data: Json<Data>) -> Result<NAsciiString, ErrResult> {
+async fn convert(data: Json<Data>) -> Result<Vec<u8>, ErrResult> {
     match decode(BASE64_STANDARD.decode(&data.audio).unwrap())
         .await
         .or_else(|error| Err(ErrResult { error }))
