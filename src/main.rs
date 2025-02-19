@@ -150,9 +150,10 @@ pub async fn convert_audio(data: Vec<f32>) -> ConversionResult<OkResult, ErrResu
     let mut charge = 0.0;
     let mut strength = 0.0;
     let mut previous_bit = false;
-    let mut out: Vec<i8> = Vec::with_capacity(data.len() / 8);
+    let len = data.len() / 8;
+    let mut out: Vec<i8> = Vec::with_capacity(len);
 
-    for i in 0..data.len() {
+    for i in 0..len {
         // yield occasionally to not starve other tasks
         tokio::task::yield_now().await;
 
