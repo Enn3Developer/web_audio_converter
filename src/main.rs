@@ -73,7 +73,7 @@ where
     serializer.collect_str(value)
 }
 
-pub async fn decode(data: Vec<u8>) -> Result<Vec<f32>, AudioError> {
+pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
     let source = Box::new(Cursor::new(data));
     let mut decoded = vec![];
     let mss = MediaSourceStream::new(source, Default::default());
@@ -121,7 +121,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<f32>, AudioError> {
 
         match decoder.decode(&packet) {
             Ok(decoded_buffer) => {
-                let mut buffer: SampleBuffer<f32> =
+                let mut buffer: SampleBuffer<i8> =
                     SampleBuffer::new(decoded_buffer.capacity() as u64, *decoded_buffer.spec());
                 buffer.copy_interleaved_ref(decoded_buffer);
                 decoded.reserve(buffer.len());
@@ -146,47 +146,56 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<f32>, AudioError> {
     Ok(decoded)
 }
 
-pub async fn convert_audio(data: Vec<f32>) -> ConversionResult<OkResult, ErrResult> {
-    let mut charge = 0.0;
-    let mut strength = 0.0;
+pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<OkResult, ErrResult> {
+    let mut charge: i32 = 0;
+    let mut strength: i32 = 1;
     let mut previous_bit = false;
+    let strength_increase = 7;
+    let strength_decrease = 20;
     let len = data.len() / 8;
     let mut out: Vec<i8> = Vec::with_capacity(len);
 
     for i in 0..len {
-        // yield occasionally to not starve other tasks
-        tokio::task::yield_now().await;
-
         let mut byte = 0i8;
         for j in 0..8 {
-            let level = data[i * 8 + j] * 127.0;
-            let bit = level > charge || (level == charge && charge == 127.0);
-            let target = if bit { 127.0 } else { -128.0 };
-            let mut next_charge = charge
-                + ((strength * (target - charge) + (1 << (PREC - 1)) as f32) as u64 >> PREC) as f32;
-            if next_charge == charge && next_charge != target {
-                next_charge += if bit { 1.0 } else { -1.0 };
+            let level = data[i * 8 + j] as i32;
+            let bit = level > charge || (level == charge && charge == 127);
+            let target: i8 = if bit { 127 } else { -128 };
+            let target_32 = target as i32;
+
+            // charge adjustment - begin
+            // TODO: magic numbers
+            let mut next_charge = charge + (strength * (target_32 - charge) + 128) / 256;
+            if charge == next_charge {
+                if target_32 < charge {
+                    next_charge -= 1;
+                } else if target_32 > charge {
+                    next_charge += 1;
+                }
+                charge = next_charge;
             }
-            let z = if bit == previous_bit {
-                (1 << PREC) - 1
+            // charge adjustment - end
+
+            // strength adjustment - begin
+            let (r, z) = if bit == previous_bit {
+                (strength_increase, 255)
             } else {
-                0
-            } as f32;
-            let mut next_strength = strength;
-            if strength != z {
-                next_strength += if bit { 1.0 } else { -1.0 };
-            }
-            if next_strength < (2 << (PREC - 8)) as f32 {
-                next_strength = (2 << (PREC - 8)) as f32;
-            }
-            charge = next_charge;
-            strength = next_strength;
-            previous_bit = bit;
-            byte = if bit {
-                ((byte as i16 >> 1) + 128) as i8
-            } else {
-                byte >> 1
+                (strength_decrease, 0)
             };
+            // TODO: magic numbers
+            let mut next_strength = strength + (r * (z - strength) + 128) / 256;
+            if strength == next_strength {
+                if z < strength {
+                    next_strength -= 1;
+                } else if z > strength {
+                    next_strength += 1;
+                }
+                strength = next_strength;
+            }
+            // strength adjustment - end
+            let bit_value = if bit { 1 } else { 0 };
+            byte = byte | (bit_value << (7 - j));
+            previous_bit = bit;
         }
         out.push(byte);
     }
