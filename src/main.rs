@@ -44,7 +44,7 @@ impl<T, E> From<Result<T, E>> for ConversionResult<T, E> {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OkResult {
-    audio: Vec<u8>,
+    audio: Vec<i8>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -73,7 +73,7 @@ where
     serializer.collect_str(value)
 }
 
-pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
+pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
     let source = Box::new(Cursor::new(data));
     let mut decoded = vec![];
     let mss = MediaSourceStream::new(source, Default::default());
@@ -121,7 +121,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
 
         match decoder.decode(&packet) {
             Ok(decoded_buffer) => {
-                let mut buffer: SampleBuffer<u8> =
+                let mut buffer: SampleBuffer<i8> =
                     SampleBuffer::new(decoded_buffer.capacity() as u64, *decoded_buffer.spec());
                 buffer.copy_interleaved_ref(decoded_buffer);
                 decoded.reserve(buffer.len());
