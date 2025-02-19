@@ -42,7 +42,7 @@ impl<T, E> From<Result<T, E>> for ConversionResult<T, E> {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OkResult {
-    audio: Vec<i8>,
+    audio: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -149,7 +149,7 @@ pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<OkResult, ErrResul
     let strength_increase = 7;
     let strength_decrease = 20;
     let len = data.len() / 8;
-    let mut out: Vec<i8> = Vec::with_capacity(len);
+    let mut out = Vec::with_capacity(len);
 
     for i in 0..len {
         // yield occasionally to not starve other tasks
@@ -196,10 +196,12 @@ pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<OkResult, ErrResul
             byte = if bit { -(byte >> 1) } else { byte >> 1 };
             previous_bit = bit;
         }
-        out.push(byte);
+        out.push(((byte as i16 + 128) as u8) as char);
     }
 
-    ConversionResult::Ok(OkResult { audio: out })
+    ConversionResult::Ok(OkResult {
+        audio: out.iter().collect(),
+    })
 }
 
 #[get("/convert/<name>")]
