@@ -130,12 +130,17 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
 
         match decoder.decode(&packet) {
             Ok(decoded_buffer) => {
+                let spec = *decoded_buffer.spec();
                 let mut buffer: SampleBuffer<i8> =
-                    SampleBuffer::new(decoded_buffer.capacity() as u64, *decoded_buffer.spec());
-                buffer.copy_interleaved_ref(decoded_buffer);
+                    SampleBuffer::new(decoded_buffer.capacity() as u64, spec);
+                buffer.copy_planar_ref(decoded_buffer);
                 decoded.reserve(buffer.len());
-                for sample in buffer.samples() {
-                    decoded.push(*sample);
+                let mut samples = buffer.len();
+                if spec.channels.count() > 1 {
+                    samples /= spec.channels.count();
+                }
+                for sample in 0..samples {
+                    decoded.push(buffer.samples()[sample]);
                 }
             }
             Err(symphonia::core::errors::Error::DecodeError(err)) => warn!("decode error: {}", err),
