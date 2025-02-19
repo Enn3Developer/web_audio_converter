@@ -3,9 +3,11 @@ extern crate rocket;
 
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use rocket::http::ContentType;
+use rocket::response::{Builder, Responder};
 use rocket::serde::json::Json;
 use rocket::serde::{Deserialize, Serialize};
-use rocket::tokio;
+use rocket::{tokio, Request, Response};
 use serde::Serializer;
 use std::fmt::Display;
 use std::io;
@@ -45,7 +47,7 @@ pub struct OkResult {
     audio: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Responder)]
 pub struct ErrResult {
     #[serde(serialize_with = "use_display")]
     error: AudioError,
@@ -61,6 +63,16 @@ pub enum AudioError {
     NoTrack,
     #[error("error happened during decoding of base64: {0}")]
     Base64(String),
+}
+
+impl<'r, 'o: 'r> Responder<'r, 'o> for AudioError {
+    fn respond_to(self, _request: &'r Request<'_>) -> rocket::response::Result<'o> {
+        let mut response = Response::new();
+        response.adjoin_header(ContentType::new("text", "plain"));
+        let string = self.to_string();
+        response.set_sized_body(string.len(), Cursor::new(string));
+        Ok(response)
+    }
 }
 
 fn use_display<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
@@ -142,7 +154,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<i8>, AudioError> {
     Ok(decoded)
 }
 
-pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<String, ErrResult> {
+pub async fn convert_audio(data: Vec<i8>) -> String {
     let mut charge: i32 = 0;
     let mut strength: i32 = 1;
     let mut previous_bit = false;
@@ -199,29 +211,27 @@ pub async fn convert_audio(data: Vec<i8>) -> ConversionResult<String, ErrResult>
         out.push(((byte as i16 + 128) as u8) as char);
     }
 
-    ConversionResult::Ok(out.iter().collect())
+    out.iter().collect()
 }
 
 #[get("/convert/<name>")]
-async fn convert_file(name: &str) -> Json<ConversionResult<String, ErrResult>> {
+async fn convert_file(name: &str) -> Result<String, ErrResult> {
     let file = tokio::fs::read(name).await.unwrap();
     match decode(file).await.or_else(|error| Err(ErrResult { error })) {
-        Ok(audio) => convert_audio(audio).await,
-        Err(res) => ConversionResult::Err(res),
+        Ok(audio) => Ok(convert_audio(audio).await),
+        Err(res) => Err(res),
     }
-    .into()
 }
 
 #[post("/convert", data = "<data>")]
-async fn convert(data: Json<Data>) -> Json<ConversionResult<String, ErrResult>> {
+async fn convert(data: Json<Data>) -> Result<String, ErrResult> {
     match decode(BASE64_STANDARD.decode(&data.audio).unwrap())
         .await
         .or_else(|error| Err(ErrResult { error }))
     {
-        Ok(audio) => convert_audio(audio).await,
-        Err(res) => ConversionResult::Err(res),
+        Ok(audio) => Ok(convert_audio(audio).await),
+        Err(res) => Err(res),
     }
-    .into()
 }
 
 #[get("/")]
