@@ -19,7 +19,7 @@ use symphonia::core::probe::Hint;
 use symphonia::default::get_probe;
 use thiserror::Error;
 
-const PREC: u8 = 3;
+const PREC: u8 = 10;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Data {
@@ -73,7 +73,7 @@ where
     serializer.collect_str(value)
 }
 
-pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
+pub async fn decode(data: Vec<u8>) -> Result<Vec<f32>, AudioError> {
     let source = Box::new(Cursor::new(data));
     let mut decoded = vec![];
     let mss = MediaSourceStream::new(source, Default::default());
@@ -121,7 +121,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
 
         match decoder.decode(&packet) {
             Ok(decoded_buffer) => {
-                let mut buffer: SampleBuffer<u8> =
+                let mut buffer: SampleBuffer<f32> =
                     SampleBuffer::new(decoded_buffer.capacity() as u64, *decoded_buffer.spec());
                 buffer.copy_interleaved_ref(decoded_buffer);
                 decoded.reserve(buffer.len());
@@ -146,9 +146,9 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
     Ok(decoded)
 }
 
-pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResult> {
-    let mut charge: i8 = 0;
-    let mut strength: i8 = 0;
+pub async fn convert_audio(data: Vec<f32>) -> ConversionResult<OkResult, ErrResult> {
+    let mut charge = 0.0;
+    let mut strength = 0.0;
     let mut previous_bit = false;
     let mut out: Vec<i8> = Vec::with_capacity(data.len() / 8);
 
@@ -158,34 +158,25 @@ pub async fn convert_audio(data: Vec<u8>) -> ConversionResult<OkResult, ErrResul
 
         let mut byte = 0i8;
         for j in 0..8 {
-            let level = data.get(i * 8 + j).unwrap_or(&0).wrapping_mul(127) as i8;
-            let bit = level > charge || (level == charge && charge == 127);
-            let target: i8 = if bit { 127 } else { -128 };
+            let level = data.get(i * 8 + j).unwrap_or(&0.0) * 127.0;
+            let bit = level > charge || (level == charge && charge == 127.0);
+            let target = if bit { 127.0 } else { -128.0 };
             let mut next_charge = charge
-                + ((strength.wrapping_mul(target.wrapping_sub(charge)) + (1 << (PREC - 1)))
-                    >> PREC);
+                + ((strength * (target - charge) + (1 << (PREC - 1)) as f32) as u64 >> PREC) as f32;
             if next_charge == charge && next_charge != target {
-                if bit {
-                    next_charge += 1;
-                } else {
-                    next_charge -= 1;
-                }
+                next_charge += if bit { 1.0 } else { -1.0 };
             }
             let z = if bit == previous_bit {
                 (1 << PREC) - 1
             } else {
                 0
-            };
+            } as f32;
             let mut next_strength = strength;
             if strength != z {
-                if bit == previous_bit {
-                    next_strength += 1;
-                } else {
-                    next_strength -= 1;
-                }
+                next_strength += if bit { 1.0 } else { -1.0 };
             }
-            if next_strength < 2 << (PREC - 2) {
-                next_strength = 2 << (PREC - 2);
+            if next_strength < (2 << (PREC - 8)) as f32 {
+                next_strength = (2 << (PREC - 8)) as f32;
             }
             charge = next_charge;
             strength = next_strength;
