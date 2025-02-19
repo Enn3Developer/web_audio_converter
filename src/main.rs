@@ -44,7 +44,7 @@ impl<T, E> From<Result<T, E>> for ConversionResult<T, E> {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OkResult {
-    audio: Vec<i8>,
+    audio: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -73,7 +73,7 @@ where
     serializer.collect_str(value)
 }
 
-pub async fn decode(data: Vec<u8>) -> Result<Vec<f32>, AudioError> {
+pub async fn decode(data: Vec<u8>) -> Result<Vec<u8>, AudioError> {
     let source = Box::new(Cursor::new(data));
     let mut decoded = vec![];
     let mss = MediaSourceStream::new(source, Default::default());
@@ -121,7 +121,7 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<f32>, AudioError> {
 
         match decoder.decode(&packet) {
             Ok(decoded_buffer) => {
-                let mut buffer: SampleBuffer<f32> =
+                let mut buffer: SampleBuffer<u8> =
                     SampleBuffer::new(decoded_buffer.capacity() as u64, *decoded_buffer.spec());
                 buffer.copy_interleaved_ref(decoded_buffer);
                 decoded.reserve(buffer.len());
@@ -146,59 +146,59 @@ pub async fn decode(data: Vec<u8>) -> Result<Vec<f32>, AudioError> {
     Ok(decoded)
 }
 
-pub async fn convert_audio(data: Vec<f32>) -> ConversionResult<OkResult, ErrResult> {
-    let mut charge = 0.0;
-    let mut strength = 0.0;
-    let mut previous_bit = false;
-    let len = data.len() / 8;
-    let mut out: Vec<i8> = Vec::with_capacity(len);
-
-    for i in 0..len {
-        // yield occasionally to not starve other tasks
-        tokio::task::yield_now().await;
-
-        let mut byte = 0i8;
-        for j in 0..8 {
-            let level = data.get(i * 8 + j).unwrap_or(&0.0) * 127.0;
-            let bit = level > charge || (level == charge && charge == 127.0);
-            let target = if bit { 127.0 } else { -128.0 };
-            let mut next_charge = charge
-                + ((strength * (target - charge) + (1 << (PREC - 1)) as f32) as u64 >> PREC) as f32;
-            if next_charge == charge && next_charge != target {
-                next_charge += if bit { 1.0 } else { -1.0 };
-            }
-            let z = if bit == previous_bit {
-                (1 << PREC) - 1
-            } else {
-                0
-            } as f32;
-            let mut next_strength = strength;
-            if strength != z {
-                next_strength += if bit { 1.0 } else { -1.0 };
-            }
-            if next_strength < (2 << (PREC - 8)) as f32 {
-                next_strength = (2 << (PREC - 8)) as f32;
-            }
-            charge = next_charge;
-            strength = next_strength;
-            previous_bit = bit;
-            byte = if bit {
-                ((byte as i16 >> 1) + 128) as i8
-            } else {
-                byte >> 1
-            };
-        }
-        out.push(byte);
-    }
-
-    ConversionResult::Ok(OkResult { audio: out })
-}
+// pub async fn convert_audio(data: Vec<f32>) -> ConversionResult<OkResult, ErrResult> {
+//     let mut charge = 0.0;
+//     let mut strength = 0.0;
+//     let mut previous_bit = false;
+//     let len = data.len() / 8;
+//     let mut out: Vec<i8> = Vec::with_capacity(len);
+//
+//     for i in 0..len {
+//         // yield occasionally to not starve other tasks
+//         tokio::task::yield_now().await;
+//
+//         let mut byte = 0i8;
+//         for j in 0..8 {
+//             let level = data[i * 8 + j] * 127.0;
+//             let bit = level > charge || (level == charge && charge == 127.0);
+//             let target = if bit { 127.0 } else { -128.0 };
+//             let mut next_charge = charge
+//                 + ((strength * (target - charge) + (1 << (PREC - 1)) as f32) as u64 >> PREC) as f32;
+//             if next_charge == charge && next_charge != target {
+//                 next_charge += if bit { 1.0 } else { -1.0 };
+//             }
+//             let z = if bit == previous_bit {
+//                 (1 << PREC) - 1
+//             } else {
+//                 0
+//             } as f32;
+//             let mut next_strength = strength;
+//             if strength != z {
+//                 next_strength += if bit { 1.0 } else { -1.0 };
+//             }
+//             if next_strength < (2 << (PREC - 8)) as f32 {
+//                 next_strength = (2 << (PREC - 8)) as f32;
+//             }
+//             charge = next_charge;
+//             strength = next_strength;
+//             previous_bit = bit;
+//             byte = if bit {
+//                 ((byte as i16 >> 1) + 128) as i8
+//             } else {
+//                 byte >> 1
+//             };
+//         }
+//         out.push(byte);
+//     }
+//
+//     ConversionResult::Ok(OkResult { audio: out })
+// }
 
 #[get("/convert/<name>")]
 async fn convert_file(name: &str) -> Json<ConversionResult<OkResult, ErrResult>> {
     let file = tokio::fs::read(name).await.unwrap();
     match decode(file).await.or_else(|error| Err(ErrResult { error })) {
-        Ok(data) => convert_audio(data).await,
+        Ok(audio) => ConversionResult::Ok(OkResult { audio }),
         Err(res) => ConversionResult::Err(res),
     }
     .into()
@@ -210,7 +210,7 @@ async fn convert(data: Json<Data>) -> Json<ConversionResult<OkResult, ErrResult>
         .await
         .or_else(|error| Err(ErrResult { error }))
     {
-        Ok(data) => convert_audio(data).await,
+        Ok(audio) => ConversionResult::Ok(OkResult { audio }),
         Err(res) => ConversionResult::Err(res),
     }
     .into()
